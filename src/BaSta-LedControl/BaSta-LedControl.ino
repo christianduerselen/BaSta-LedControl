@@ -1,14 +1,16 @@
 #include <SoftwareSerial.h>
 #include "Troolean.h"
 
-const int SerialInputPin = 2;
-const int SerialOutputPin = 5;
-const int GpioOutput1Pin = 3;
-const int GpioOutput2Pin = 4;
+const int YellowLedOutputPin = 2;
+const int RedLedOutputPin = 3;
+const int ReceiverOutputPin = 4;
+const int ReceiverEnablePin = 5;
+const int DriverEnablePin = 6;
+const int DriverInputPin = 7;
 const int MessageSize = 54;
 const unsigned long flashDuration = 3000;
 
-SoftwareSerial serialInput(SerialInputPin, SerialOutputPin);
+SoftwareSerial serialInput(ReceiverOutputPin, DriverInputPin);
 byte message[MessageSize];
 int messagePointer = 0;
 bool isInitialized = false;
@@ -16,7 +18,11 @@ bool isInitialized = false;
 Troolean gameClockZeroState(unknown);
 Troolean gameClockZeroStateReceived(unknown);
 unsigned long gameClockTimer = 0;
-bool shotClockHornState = false;
+bool gameClockLedState = false;
+Troolean shotClockZeroState(unknown);
+Troolean shotClockZeroStateReceived(unknown);
+unsigned long shotClockTimer = 0;
+bool shotClockLedState = false;
 
 //////////////////////////////////////////////////
 ////////// SETUP & MAIN LOOP
@@ -24,11 +30,19 @@ bool shotClockHornState = false;
 void setup()
 {
   // Configure GPIOs as outputs
-  pinMode(GpioOutput1Pin, OUTPUT);
-  pinMode(GpioOutput2Pin, OUTPUT);
+  pinMode(YellowLedOutputPin, OUTPUT);
+  pinMode(RedLedOutputPin, OUTPUT);
+
+  // Configure the MAX485 DE & RE GPIO pins as LOW to only enable receiving
+  pinMode(ReceiverEnablePin, OUTPUT);
+  digitalWrite(ReceiverEnablePin, LOW);
+  pinMode(DriverEnablePin, OUTPUT);
+  digitalWrite(DriverEnablePin, LOW);
 
   // Configure serial receive (through SerialInput)
   serialInput.begin(19200);
+
+  Serial.begin(19200);
 }
 
 void loop()
@@ -84,6 +98,8 @@ void receive()
     // Read next byte from input
     byte value = serialInput.read();
 
+    Serial.write(value);
+
     // Reset pointer if overflow would happen
     if (messagePointer >= MessageSize)
       messagePointer = 0;
@@ -115,7 +131,6 @@ void parse()
   if (message[1] != 0x33 && message[1] != 0x37 && message[1] != 0x38)
     return;
 
-
   // Parse game clock (bytes 4 to 7)
   gameClockZeroStateReceived = unknown;
   for (int i = 4; i < 8; i++)
@@ -133,14 +148,46 @@ void parse()
       continue;
     }
 
-    // Other values mean non-zero value
-    gameClockZeroStateReceived = false;
+    // 0x31 (1) to 0x39 (9) and 0x41 (.1) to 0x49 (.9) mean value other than zero
+    if ((value > 0x30 && value < 0x3A) || (value > 0x40 && value < 0x4A))
+    {
+      gameClockZeroStateReceived = false;
+      break;
+    }
+    
+    // Other values mean unknown state
+    gameClockZeroStateReceived = unknown;
     break;
   }
 
+  // Parse shot clock (bytes 48 to 49)
+  shotClockZeroStateReceived = unknown;
+  for (int i = 48; i < 50; i++)
+  {
+    byte value = message[i];
 
-  // Parse shot clock horn (byte 50)
-  shotClockHornState = message[50] == 0x31;
+    // Ignore spaces (0x20) and NUL bytes (0x00)
+    if (value == 0x20 || value == 0x00)
+      continue;
+
+    // 0x30 (0) and 0x40 (.0) are allowed
+    if (value == 0x30 || value == 0x40)
+    {
+      shotClockZeroStateReceived = true;
+      continue;
+    }
+
+    // 0x31 (1) to 0x39 (9) and 0x41 (.1) to 0x49 (.9) mean value other than zero
+    if ((value > 0x30 && value < 0x3A) || (value > 0x40 && value < 0x4A))
+    {
+      shotClockZeroStateReceived = false;
+      break;
+    }
+    
+    // Other values mean unknown state
+    shotClockZeroStateReceived = unknown;
+    break;
+  }
 }
 
 //////////////////////////////////////////////////
@@ -148,9 +195,13 @@ void parse()
 
 void control()
 {
-  // If we transition from non-zero to zero game clock with horn set red LED
+  // If we transition from non-zero to zero game clock unset yellow and set red LED
   if (gameClockZeroState == false && gameClockZeroStateReceived == true)
   {
+    setYellowLed(false);
+    shotClockTimer = 0;
+    shotClockZeroState = shotClockZeroStateReceived;
+    
     setRedLed(true);
     gameClockTimer = millis();
   }
@@ -165,9 +216,28 @@ void control()
   // Remember the received state
   gameClockZeroState = gameClockZeroStateReceived;
 
+  // Make sure that the yellow LED is not controlled while the red one is active
+  if (gameClockLedState == true)
+  {
+    return;
+  }
 
-  // The yellow shot clock LED is directly controlled by the horn state
-  setYellowLed(shotClockHornState);
+  // If we transition from non-zero to zero shot clock set yellow LED
+  if (shotClockZeroState == false && shotClockZeroStateReceived == true)
+  {
+    setYellowLed(true);
+    shotClockTimer = millis();
+  }
+
+  // If the yellow LED was active for the designated time, disable it
+  if (shotClockTimer != 0 && millis() - shotClockTimer >= flashDuration)
+  {
+    setYellowLed(false);
+    shotClockTimer = 0;
+  }
+
+  // Remember the received state
+  shotClockZeroState = shotClockZeroStateReceived;
 }
 
 //////////////////////////////////////////////////
@@ -175,12 +245,14 @@ void control()
 
 void setRedLed(bool state)
 {
-  setLed(GpioOutput1Pin, state);
+  gameClockLedState = state;
+  setLed(RedLedOutputPin, state);
 }
 
 void setYellowLed(bool state)
 {
-  setLed(GpioOutput2Pin, state);
+  shotClockLedState = state;
+  setLed(YellowLedOutputPin, state);
 }
 
 void setLed(int pin, bool state)

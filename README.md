@@ -4,11 +4,13 @@ BaSta-LedControl is an Arduino program used to control the red and yellow basket
 
 ## Usage
 
-BaSta-LedControl is intended to be used on an Arduino Uno board. The Stramatel basketball protocol is received through serial input. Two digital output pins control the LED state e.g. via switch relays.
+BaSta-LedControl is intended to be used on an Arduino Uno board. The Stramatel basketball protocol is received through serial input from a MAX485 board. Two digital output pins control the LED state e.g. via switch relays.
 
 To keep the USB serial interface enabled, the protocol is received through a separate Rx-pin and the SoftwareSerial plugin. Following is the pin usage for an Arduino Uno board:
 
-- 2 - Rx serial input (SoftwareSerial)
-- 3 - gpio output #1 (red stripe)
-- 4 - gpio output #2 (yellow stripe)
-- 5 - Tx serial input (SoftwareSerial - not used)
+- 2 - gpio output #1 (yellow stripe)
+- 3 - gpio output #2 (red stripe)
+- 4 - Receiver Output (RO) pin of MAX485 (used as RX-pin for SoftwareSerial)
+- 5 - Receiver Enable (RE) pin of MAX485 (set to LOW to only enable receiving)
+- 6 - Driver Enable (DE) pin of MAX485 (set to LOW to only enable receiving)
+- 7 - Driver Inpit (DI) pin of MAX485 (used as TX-pin for SoftwareSerial)
